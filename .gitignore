@@ -1,0 +1,10 @@
+.idea/
+*.conf
+application*/
+*.iml
+data/
+out/
+*.sh
+slaves
+*.api
+*.bak
