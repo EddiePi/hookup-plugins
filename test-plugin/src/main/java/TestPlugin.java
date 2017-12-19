@@ -14,12 +14,15 @@ public class TestPlugin extends AbstractFeedback {
 
     @Override
     public void action(List<Map<String, AnalysisContainer>> list) {
-        for(Map<String, AnalysisContainer> containerMap: list) {
-            for(Map.Entry<String, AnalysisContainer> containerEntry: containerMap.entrySet()) {
-                String containerId = containerEntry.getKey();
-                AnalysisContainer container = containerEntry.getValue();
-                System.out.printf("containerId: %s, timestamp: %d, memory usage %d\n", containerId, container.getTimestamp(), container.memory);
+        for(int i = 0; i < 5; i++) {
+            System.out.printf("this is test plugin, iter: %d\n", i);
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
+        isRunning = false;
+
     }
 }
