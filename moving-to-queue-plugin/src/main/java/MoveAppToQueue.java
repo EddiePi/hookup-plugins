@@ -4,14 +4,11 @@ import feedback.AbstractFeedback;
 import utils.ShellCommandExecutor;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class MoveAppToQueue extends AbstractFeedback {
 
-    final int timeoutThreshold = 15;
+    final int timeoutThreshold = 8;
     Map<String, Integer> pendingAppMap;
     List<SchedulerQueue> leafQueues;
 
@@ -20,6 +17,7 @@ public class MoveAppToQueue extends AbstractFeedback {
         pendingAppMap = new HashMap<>();
         leafQueues = new LinkedList<>();
         initQueues();
+        System.out.print("MoveAppToQueue plugin is loaded\n");
     }
 
     @Override
@@ -27,8 +25,8 @@ public class MoveAppToQueue extends AbstractFeedback {
         // Find "app.state" message from this window. Then, app/remove the corresponding entry in the pendingAppMap.
         for(Map<String, AnalysisContainer> containerMap: list) {
             for(Map.Entry<String, AnalysisContainer> entry: containerMap.entrySet()) {
-                String key = entry.getKey();
-                if (!key.matches("app.*")) {
+                String appId = entry.getKey();
+                if (!appId.matches("app.*")) {
                     continue;
                 }
                 AnalysisContainer value = entry.getValue();
@@ -38,11 +36,14 @@ public class MoveAppToQueue extends AbstractFeedback {
                         Double doubleValue = message.value;
                         String messageKey = message.key;
                         if (messageKey.equals("app.state")) {
+                            System.out.printf("get app state log. app: %s, value: %f\n", appId, doubleValue);
                             int compareResult = Double.compare(doubleValue, 4);
                             if (compareResult == 1) {
-                                pendingAppMap.remove(messageKey);
+                                System.out.printf("remove app: %s from pending.\n", appId);
+                                pendingAppMap.remove(appId);
                             } else if (compareResult == 0) {
-                                pendingAppMap.put(messageKey, 1);
+                                System.out.printf("move app: %s to pending.\n", appId);
+                                pendingAppMap.put(appId, 1);
                             }
                         }
                     }
