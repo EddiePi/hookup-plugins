@@ -102,7 +102,8 @@ public class TimeOutRestart extends AbstractFeedback {
 
     }
 
-    private String getAppCommand(String appId) throws IOException {
+    // public for test
+    public String getAppCommand(String appId) throws IOException {
         String appCommand;
 
         // find the type of the app
@@ -110,6 +111,7 @@ public class TimeOutRestart extends AbstractFeedback {
         executor.execute();
         String[] lines = executor.getOutput().split("\n");
         if (lines.length < 10) {
+            System.out.print("connect to RM failed or no such appId");
             return "";
         }
         String appType = "";
@@ -126,7 +128,8 @@ public class TimeOutRestart extends AbstractFeedback {
     }
 
 
-    private void killApp(String appId) {
+    // public for test
+    public void killApp(String appId) {
         ShellCommandExecutor executor = new ShellCommandExecutor(yarnHome + " application -kill " + appId);
     }
 }
