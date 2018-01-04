@@ -3,17 +3,15 @@ import detection.KeyedMessage;
 import feedback.AbstractFeedback;
 import utils.ShellCommandExecutor;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
-/**
- * Created by Eddie on 2017/12/27.
- */
 public class TimeOutRestart extends AbstractFeedback {
 
     Map<String, Double> appState;
     Map<String, Integer> containerTimeoutMap;
-    private String yarnHome = "/home/eddie/hadoop-2.7.3/bin/yarn";
+    private String HADOOP_HOME = "/home/eddie/hadoop-2.7.3";
 
     public TimeOutRestart(String name, Integer interval) {
         super(name, interval);
@@ -65,8 +63,6 @@ public class TimeOutRestart extends AbstractFeedback {
         }
     }
 
-
-
     private String containerToAppId(String containerId) {
         String[] parts = containerId.split("_");
         String appId = "application_" + parts[1] + "_" + parts[2];
@@ -83,30 +79,44 @@ public class TimeOutRestart extends AbstractFeedback {
             }
         }
         for (String appId: appToRestart) {
-            String command = "";
+            String appStartCommand = "";
+            String outputDir;
             try {
-                command = getAppCommand(appId);
+                appStartCommand = getAppCommand(appId);
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            outputDir = getAppOutputDir(appStartCommand);
             killApp(appId);
+            String realCommand = appStartCommand;
 
-            // start the app again
-            ShellCommandExecutor executor = new ShellCommandExecutor(command);
+            List<String> commands = new ArrayList<>();
+            commands.add("/bin/bash");
+            commands.add("-c");
+            if (outputDir != null) {
+                realCommand = HADOOP_HOME + "/bin/hadoop fs -rm -r " + outputDir + " && " + realCommand;
+            }
+            commands.add(realCommand);
+            ProcessBuilder pb = new ProcessBuilder(commands);
+            pb.environment().put("YARN_CONF_DIR", HADOOP_HOME + "/etc/hadoop");
+            pb.redirectError(new File("/dev/null"));
+            pb.redirectInput(new File("/dev/null"));
             try {
-                executor.execute();
+                Process p = pb.start();
+                p.waitFor();
             } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
-
     }
 
     private String getAppCommand(String appId) throws IOException {
         String appCommand;
 
         // find the type of the app
-        ShellCommandExecutor executor = new ShellCommandExecutor(yarnHome + " application -status " + appId);
+        ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + "/bin/yarn application -status " + appId);
         executor.execute();
         String[] lines = executor.getOutput().split("\n");
         if (lines.length < 10) {
@@ -125,8 +135,16 @@ public class TimeOutRestart extends AbstractFeedback {
         return appCommand;
     }
 
+    private String getAppOutputDir(String startCommand) {
+        String[] parts = startCommand.split("\\s+");
+        String outputDir = parts[parts.length - 1];
+        if (outputDir.toLowerCase().matches(".*output.*")) {
+            return outputDir;
+        }
+        return null;
+    }
 
     private void killApp(String appId) {
-        ShellCommandExecutor executor = new ShellCommandExecutor(yarnHome + " application -kill " + appId);
+        ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + "/bin/yarn application -kill " + appId);
     }
 }
