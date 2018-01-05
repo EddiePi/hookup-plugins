@@ -3,8 +3,10 @@ import detection.KeyedMessage;
 import feedback.AbstractFeedback;
 import utils.ShellCommandExecutor;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.*;
 
 public class TimeOutRestart extends AbstractFeedback {
@@ -18,6 +20,7 @@ public class TimeOutRestart extends AbstractFeedback {
 
         appState = new HashMap<>();
         containerTimeoutMap = new HashMap<>();
+        System.out.println("TimeOutRestart plugin started");
     }
 
     @Override
@@ -28,7 +31,7 @@ public class TimeOutRestart extends AbstractFeedback {
                 String id = entry.getKey();
                 AnalysisContainer value = entry.getValue();
 
-                if (id.matches("app.*")) {
+                if (id.matches("application.*")) {
                     List<KeyedMessage> messageList = value.instantMessages.get("app.state");
                     if (messageList != null) {
                         for (KeyedMessage message : messageList) {
@@ -71,10 +74,13 @@ public class TimeOutRestart extends AbstractFeedback {
     }
 
     private void maybeRestartApplications() {
+        System.out.print("maybe restart app\n");
         Set<String> appToRestart = new HashSet<>();
         for (Map.Entry<String, Integer> entry: containerTimeoutMap.entrySet()) {
-            if (entry.getValue() > 10) {
+            System.out.printf("checking container:%s\n", entry.getKey());
+            if (entry.getValue() > 2) {
                 String appId = containerToAppId(entry.getKey());
+                System.out.printf("add app to restart: %s\n", appId);
                 appToRestart.add(appId);
             }
         }
@@ -85,6 +91,9 @@ public class TimeOutRestart extends AbstractFeedback {
                 appStartCommand = getAppCommand(appId);
             } catch (IOException e) {
                 e.printStackTrace();
+            }
+            if(appStartCommand.equals("") || appStartCommand == null) {
+                return;
             }
             outputDir = getAppOutputDir(appStartCommand);
             killApp(appId);
@@ -114,11 +123,13 @@ public class TimeOutRestart extends AbstractFeedback {
 
     // public for test
     public String getAppCommand(String appId) throws IOException {
-        String appCommand;
+        String appCommand = "";
+        System.out.printf("getting app command of %s\n", appId);
 
         // find the type of the app
         ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + "/bin/yarn application -status " + appId);
         executor.execute();
+        System.out.printf("got app status\n");
         String[] lines = executor.getOutput().split("\n");
         if (lines.length < 10) {
             System.out.print("connect to RM failed or no such appId");
@@ -129,11 +140,53 @@ public class TimeOutRestart extends AbstractFeedback {
             appType = lines[3].split(":")[1].trim();
         }
 
+        System.out.print("getting start command.\n");
         // find the start command of the app
-        executor = new ShellCommandExecutor("ps -aux | grep -n 'python2.*" + appType + "'");
+//        List<String> commands = new ArrayList<>();
+//        commands.add("/bin/bash");
+//        commands.add("-c");
+//        commands.add("ps -aux");
+//        ProcessBuilder pb = new ProcessBuilder(commands);
+        //pb.redirectError(new File("/dev/null"));
+//        Process p;
+//        BufferedReader brInput;
+//        BufferedReader brError;
+//        p = pb.start();
+//        brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
+//        brError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+//        try {
+//            p.waitFor();
+//        } catch (InterruptedException e) {
+//            e.printStackTrace();
+//        }
+//
+//        System.out.print("got start command.\n");
+//        String line;
+//        String targetLine = null;
+//        while((line = brError.readLine()) != null) {
+//            System.out.printf("Error: %s\n", line);
+//        }
+//        while((line = brInput.readLine()) != null) {
+//            if (line.matches(".*/home/eddie/lib/jdk1.8.0_111/bin/java.*" + appType + ".*")) {
+//                targetLine = line;
+//                break;
+//            }
+//        }
+//        brInput.close();
+        executor = new ShellCommandExecutor("ps -aux");
         executor.execute();
         lines = executor.getOutput().split("\n");
-        appCommand = lines[0].substring(lines[0].indexOf("python2"));
+        String targetLine = null;
+        for (String line: lines) {
+            if (line.matches(".*/home/eddie/lib/jdk1.8.0_111/bin/java.*" + appType + ".*")) {
+                targetLine = line;
+                break;
+            }
+        }
+        if (targetLine != null) {
+            appCommand = targetLine.substring(targetLine.indexOf("/home/eddie/lib/jdk1.8.0_111/bin/java"));
+        }
+        System.out.printf("app command: %s\n", appCommand);
         return appCommand;
     }
 
@@ -148,6 +201,11 @@ public class TimeOutRestart extends AbstractFeedback {
 
     // public for test
     public void killApp(String appId) {
-        ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + " application -kill " + appId);
+        ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + "/bin/yarn application -kill " + appId);
+        try {
+            executor.execute();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
