@@ -148,6 +148,6 @@ public class TimeOutRestart extends AbstractFeedback {
 
     // public for test
     public void killApp(String appId) {
-        ShellCommandExecutor executor = new ShellCommandExecutor(yarnHome + " application -kill " + appId);
+        ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + " application -kill " + appId);
     }
 }
