@@ -188,38 +188,6 @@ public class TimeOutRestart extends AbstractFeedback {
         }
 
         System.out.print("getting start command.\n");
-        // find the start command of the app
-//        List<String> commands = new ArrayList<>();
-//        commands.add("/bin/bash");
-//        commands.add("-c");
-//        commands.add("ps -aux");
-//        ProcessBuilder pb = new ProcessBuilder(commands);
-        //pb.redirectError(new File("/dev/null"));
-//        Process p;
-//        BufferedReader brInput;
-//        BufferedReader brError;
-//        p = pb.start();
-//        brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
-//        brError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
-//        try {
-//            p.waitFor();
-//        } catch (InterruptedException e) {
-//            e.printStackTrace();
-//        }
-//
-//        System.out.print("got start command.\n");
-//        String line;
-//        String targetLine = null;
-//        while((line = brError.readLine()) != null) {
-//            System.out.printf("Error: %s\n", line);
-//        }
-//        while((line = brInput.readLine()) != null) {
-//            if (line.matches(".*/home/eddie/lib/jdk1.8.0_111/bin/java.*" + appType + ".*")) {
-//                targetLine = line;
-//                break;
-//            }
-//        }
-//        brInput.close();
         executor = new ShellCommandExecutor("ps -aux");
         executor.execute();
         lines = executor.getOutput().split("\n");

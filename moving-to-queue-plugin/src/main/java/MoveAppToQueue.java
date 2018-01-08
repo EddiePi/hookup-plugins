@@ -9,12 +9,19 @@ import java.util.*;
 public class MoveAppToQueue extends AbstractFeedback {
 
     final int timeoutThreshold = 8;
-    Map<String, Integer> pendingAppMap;
+    final Double CLUSTER_MEMORY = 64 * 1024 * 1024 * 1024D;
+    final int minimumMovingInterval = 5;
+    int lastMovingTime = minimumMovingInterval;
+    Map<String, Integer> pendingAppCounterMap;
+    Map<String, Integer> underUtilizedAppCounterMap;
+    Map<String, Double> appMemoryUsage;
     List<SchedulerQueue> leafQueues;
 
     public MoveAppToQueue(String name, Integer interval) {
         super(name, interval);
-        pendingAppMap = new HashMap<>();
+        pendingAppCounterMap = new HashMap<>();
+        underUtilizedAppCounterMap = new HashMap<>();
+        appMemoryUsage = new HashMap<>();
         leafQueues = new LinkedList<>();
         initQueues();
         System.out.print("MoveAppToQueue plugin is loaded\n");
@@ -22,45 +29,117 @@ public class MoveAppToQueue extends AbstractFeedback {
 
     @Override
     public void action(List<Map<String, AnalysisContainer>> list) {
-        // Find "app.state" message from this window. Then, app/remove the corresponding entry in the pendingAppMap.
+        // Find "app.state" message from this window. Then, app/remove the corresponding entry in the pendingAppCounterMap.
+        Map<String, Double> currentMemoryUsage = new HashMap<>();
         for(Map<String, AnalysisContainer> containerMap: list) {
             for(Map.Entry<String, AnalysisContainer> entry: containerMap.entrySet()) {
-                String appId = entry.getKey();
-                if (!appId.matches("app.*")) {
-                    continue;
-                }
-                AnalysisContainer value = entry.getValue();
-                List<KeyedMessage> messageList = value.instantMessages.get("app.state");
-                if (messageList != null) {
-                    for (KeyedMessage message : messageList) {
-                        Double doubleValue = message.value;
-                        String messageKey = message.key;
-                        if (messageKey.equals("app.state")) {
-                            System.out.printf("get app state log. app: %s, value: %f\n", appId, doubleValue);
-                            int compareResult = Double.compare(doubleValue, 4);
-                            if (compareResult == 1) {
-                                System.out.printf("remove app: %s from pending.\n", appId);
-                                pendingAppMap.remove(appId);
-                            } else if (compareResult == 0) {
-                                System.out.printf("move app: %s to pending.\n", appId);
-                                pendingAppMap.put(appId, 1);
-                            }
-                        }
-                    }
+                // if the app is stuck in ACCEPTED state,
+                // add it to the pending queue
+                updatePendingAppState(entry);
+
+                // update the app memory usages in this window.
+                String containerId = entry.getKey();
+                if (containerId.matches("container.*")) {
+                    String appId = containerToAppId(containerId);
+                    currentMemoryUsage.putIfAbsent(appId, 0D);
+                    Double memoryUsage = entry.getValue().memory;
+                    Double memorySum = currentMemoryUsage.get(appId);
+                    currentMemoryUsage.put(appId, memorySum + memoryUsage);
                 }
             }
         }
 
-        // Update the pendingAppMap periodically
-        for (String key: pendingAppMap.keySet()) {
-            Integer intValue = pendingAppMap.get(key);
-            if (intValue > timeoutThreshold) {
-                pendingAppMap.remove(key);
-                moveApp(key);
-            } else {
-                intValue += 1;
-                pendingAppMap.put(key, intValue);
+        // Update the pendingAppCounterMap periodically
+        updatePendingApp();
+
+        // Update the underUtilizedMap periodically
+        updateUnderUtilizedApp(currentMemoryUsage);
+
+        maybeMoveApp();
+    }
+
+    private void updatePendingAppState(Map.Entry<String, AnalysisContainer> entry) {
+        String appId = entry.getKey();
+        if (!appId.matches("app.*")) {
+            return;
+        }
+        AnalysisContainer value = entry.getValue();
+        List<KeyedMessage> messageList = value.instantMessages.get("app.state");
+        if (messageList != null) {
+            for (KeyedMessage message : messageList) {
+                Double doubleValue = message.value;
+                String messageKey = message.key;
+                if (messageKey.equals("app.state")) {
+                    System.out.printf("get app state log. app: %s, value: %f\n", appId, doubleValue);
+                    int compareResult = Double.compare(doubleValue, 4);
+                    if (compareResult == 1) {
+                        System.out.printf("remove app: %s from pending.\n", appId);
+                        pendingAppCounterMap.remove(appId);
+                    } else if (compareResult == 0) {
+                        System.out.printf("move app: %s to pending.\n", appId);
+                        pendingAppCounterMap.put(appId, 1);
+                    }
+                }
             }
+        }
+    }
+
+    private void updatePendingApp() {
+        for (String id: pendingAppCounterMap.keySet()) {
+            pendingAppCounterMap.compute(id, (key, value) -> value + 1);
+        }
+    }
+
+    private void updateUnderUtilizedApp(Map<String, Double> currentMemoryMap) {
+        for (Map.Entry<String, Double> entry: currentMemoryMap.entrySet()) {
+            String appId = entry.getKey();
+            Double newUsage = entry.getValue();
+            Double usage = appMemoryUsage.get(appId);
+            if (usage != null) {
+                if (usage < CLUSTER_MEMORY * 0.8) {
+                    if (newUsage - usage > 0 && (newUsage - usage) < usage * 0.1) {
+                        underUtilizedAppCounterMap.compute(appId, (key, value)-> value == null ? 0 : value + 1);
+                    } else {
+                        underUtilizedAppCounterMap.compute(appId, (key, value) -> value == null ? 0 : Math.max(0, value - 1));
+                    }
+                }
+            }
+        }
+        appMemoryUsage.putAll(currentMemoryMap);
+    }
+
+    private void maybeMoveApp() {
+        lastMovingTime += 1;
+        if (lastMovingTime <= minimumMovingInterval) {
+            return;
+        }
+        String appToMove = null;
+        for (Map.Entry<String, Integer> counterEntry: pendingAppCounterMap.entrySet()) {
+            if (counterEntry.getValue() > timeoutThreshold) {
+                appToMove = counterEntry.getKey();
+                break;
+            }
+        }
+
+        if (appToMove != null) {
+            pendingAppCounterMap.remove(appToMove);
+        } else {
+            // if no app is in ACCEPTED state,
+            // we further find if any app that is under-utilized.
+            for (Map.Entry<String, Integer> counterEntry: underUtilizedAppCounterMap.entrySet()) {
+                if (counterEntry.getValue() > timeoutThreshold) {
+                    appToMove = counterEntry.getKey();
+                    break;
+                }
+            }
+            if (appToMove != null) {
+                underUtilizedAppCounterMap.remove(appToMove);
+            }
+        }
+
+        if (appToMove != null) {
+            moveApp(appToMove);
+            lastMovingTime = 0;
         }
     }
 
@@ -147,5 +226,12 @@ public class MoveAppToQueue extends AbstractFeedback {
             this.isLeaf = isLeaf;
             remainingCapacity = 0d;
         }
+    }
+
+    private String containerToAppId(String containerId) {
+        String[] parts = containerId.split("_");
+        String appId = "application_" + parts[1] + "_" + parts[2];
+
+        return appId;
     }
 }
