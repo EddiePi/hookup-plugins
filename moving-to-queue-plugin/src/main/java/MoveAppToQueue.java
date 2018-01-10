@@ -13,6 +13,8 @@ public class MoveAppToQueue extends AbstractFeedback {
 
     TracerConf conf = TracerConf.getInstance();
     int timeoutThreshold;
+    String HADOOP_HOME;
+    String SCRIPT_HOME;
     final Double CLUSTER_MEMORY = 64 * 1024 * 1024 * 1024D;
     final int minimumMovingInterval = 10;
     int lastMovingTime = minimumMovingInterval;
@@ -22,6 +24,7 @@ public class MoveAppToQueue extends AbstractFeedback {
     Map<String, Double> appMemoryUsage;
     Map<String, Double> appStateMap;
     Map<String, Integer> appThreshold;
+    ConcurrentHashMap<String, AppMetaData> appMetaMap;
     String appMoving = "";
     List<SchedulerQueue> leafQueues;
 
@@ -33,7 +36,10 @@ public class MoveAppToQueue extends AbstractFeedback {
         appMemoryUsage = new HashMap<>();
         appStateMap = new HashMap<>();
         appThreshold = new HashMap<>();
+        appMetaMap = new ConcurrentHashMap<>();
         leafQueues = new LinkedList<>();
+        HADOOP_HOME = conf.getStringOrDefault("tracer.hadoop-home", "/home/eddie/hadoop-2.7.3");
+        SCRIPT_HOME = conf.getStringOrDefault("tracer.script-home", "/home/eddie/hookup/script");
         initQueues();
         System.out.print("MoveAppToQueue plugin is loaded\n");
     }
@@ -91,6 +97,10 @@ public class MoveAppToQueue extends AbstractFeedback {
                     if (Double.compare(doubleValue, 5D) <= 0) {
                         appStateMap.put(appId, doubleValue);
                         appThreshold.putIfAbsent(appId, timeoutThreshold);
+                        if (!appMetaMap.containsKey(appId)) {
+                            Thread getMetaThread = new Thread(new getAppMetaDataRunnable(appId));
+                            getMetaThread.start();
+                        }
 
                         if (Double.compare(doubleValue, 5D) == 0) {
                             appMemoryUsage.putIfAbsent(appId, 0D);
@@ -100,6 +110,7 @@ public class MoveAppToQueue extends AbstractFeedback {
                         appMemoryUsage.remove(appId);
                         underUtilizedAppCounterMap.remove(appId);
                         appThreshold.remove(appId);
+                        appMetaMap.remove(appId);
                     }
                     int compareResult = Double.compare(doubleValue, 4);
                     if (compareResult == 1) {
@@ -133,6 +144,15 @@ public class MoveAppToQueue extends AbstractFeedback {
     private void updateUnderUtilizedApp(Map<String, Double> currentMemoryMap) {
         for (Map.Entry<String, Double> entry: currentMemoryMap.entrySet()) {
             String appId = entry.getKey();
+            // remove the app from memory usage map and counter map if the app is not SPARK
+            AppMetaData meta = appMetaMap.get(appId);
+            if (meta != null) {
+                if (!meta.type.equals("SPARK") || !meta.type.equals("")) {
+                    appMemoryUsage.remove(appId);
+                    underUtilizedAppCounterMap.remove(appId);
+                    continue;
+                }
+            }
             Double newUsage = entry.getValue();
             Double usage = appMemoryUsage.get(appId);
             if (usage != null && !appId.equals(appMoving)) {
@@ -272,7 +292,7 @@ public class MoveAppToQueue extends AbstractFeedback {
             String queueToMove = findOptimalQueue();
             System.out.printf("Moving App: %s to queue: %s\n", appId, queueToMove);
 
-            String command = "/home/eddie/hookup/script/move-app-to-queue.sh " + appId + " " + queueToMove;
+            String command = SCRIPT_HOME + "/move-app-to-queue.sh " + appId + " " + queueToMove;
             ShellCommandExecutor executor = new utils.ShellCommandExecutor(command);
             try {
                 executor.execute();
@@ -333,6 +353,42 @@ public class MoveAppToQueue extends AbstractFeedback {
             String doubleStr = line.split(":")[1].replace("%", "").trim();
             double value = Double.valueOf(doubleStr);
             return value;
+        }
+    }
+
+    public class getAppMetaDataRunnable implements Runnable {
+
+        String appId;
+
+        public getAppMetaDataRunnable(String appId) {
+            this.appId = appId;
+        }
+        @Override
+        public void run() {
+            ShellCommandExecutor executor = new ShellCommandExecutor(HADOOP_HOME + "/bin/yarn application -status " + appId);
+            try {
+                executor.execute();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            System.out.printf("got app status\n");
+            String[] lines = executor.getOutput().split("\n");
+            if (lines.length < 10) {
+                System.out.print("connect to RM failed or no such appId\n");
+            }
+            AppMetaData appMetaData = new AppMetaData(appId);
+            if (lines[3].matches(".*Application_Type.*")) {
+                appMetaData.type = lines[3].split(":")[1].trim();
+            }
+            if (appMetaData.type.equals("SPARK")) {
+                if (lines[2].matches(".*Application-Name.*")) {
+                    appMetaData.name = lines[2].split(":")[1].trim().split("\\s")[0];
+                }
+            }
+            if (lines[6].matches(".*Start-Time.*")) {
+                appMetaData.startTime = Long.parseLong(lines[6].split(":")[1].trim());
+            }
+            appMetaMap.put(appId, appMetaData);
         }
     }
 }
