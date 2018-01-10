@@ -47,6 +47,7 @@ public class TimeOutRestart extends AbstractFeedback {
                             Double doubleValue = message.value;
                             String messageKey = message.key;
                             if (messageKey.equals("app.state")) {
+                                System.out.printf("get app state: %f\n", doubleValue);
                                 if (Double.compare(doubleValue, 5) == 1) {
                                     appState.remove(id);
                                     removeAllContainerOfApp(id);
