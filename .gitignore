@@ -3,6 +3,7 @@
 application*/
 *.iml
 data/
+META-INF/
 out/
 *.sh
 slaves
